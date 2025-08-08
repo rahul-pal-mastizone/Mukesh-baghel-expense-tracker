@@ -7,16 +7,8 @@ const iso = (d)=> d ? new Date(d).toISOString().slice(0,10) : '';
 const LS_KEY = 'shopkeeper_data_v2';
 const LS_PHOTO = 'nidhi_boot_house_photo';
 let state = JSON.parse(localStorage.getItem(LS_KEY) || 'null') || {
-  warehouses: [
-    { name:'Aakaash boot shop', purchases:[
-      {amount:1000, due:100, date:'2025-08-01', product:'shoes 10'},
-      {amount:3000, due:300, date:'2025-08-05', product:'shoes 10'}
-    ]},
-    { name:'Ankur Maheswari', purchases:[{amount:13000, due:1300, date:'2025-08-08', product:'1 project'}] },
-    { name:'Rahul Pal', purchases:[] }
-  ]
+  warehouses: [] // start with no warehouses
 };
-
 function save(){ localStorage.setItem(LS_KEY, JSON.stringify(state)); }
 
 /****************** CLIENT PHOTO ******************/
