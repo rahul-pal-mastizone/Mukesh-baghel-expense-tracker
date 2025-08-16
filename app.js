@@ -2,6 +2,26 @@
 const $ = (sel) => document.querySelector(sel);
 const formatMoney = (n) => (Number(n||0)).toLocaleString(undefined,{style:'currency',currency:'USD'});
 const iso = (d)=> d ? new Date(d).toISOString().slice(0,10) : '';
+const toNum = (v)=> Number(v||0);
+
+// Normalize legacy records (amount/due) into bill/paid/due for computations
+function pickBill(p){
+  if (p.bill != null) return toNum(p.bill);
+  if (p.amount != null) return toNum(p.amount);
+  return 0;
+}
+function pickPaid(p){
+  if (p.paid != null) return toNum(p.paid);
+  // legacy: if amount & due exist, paid = amount - due
+  if (p.amount != null && p.due != null) return Math.max(0, toNum(p.amount) - toNum(p.due));
+  return 0;
+}
+function pickDue(p){
+  // prefer stored due if new model present; otherwise compute
+  const bill = pickBill(p);
+  const paid = pickPaid(p);
+  return Math.max(0, bill - paid);
+}
 
 /****************** STATE ******************/
 const LS_KEY = 'shopkeeper_data_v2';
@@ -44,14 +64,14 @@ function refreshWarehouseTable(){
   const tbody = $('#warehouseTable tbody');
   tbody.innerHTML = '';
   state.warehouses.forEach((w, i)=>{
-    const totalSpent = w.purchases.reduce((s,p)=>s+Number(p.amount||0),0);
-    const totalDue = w.purchases.reduce((s,p)=>s+Number(p.due||0),0);
+    const totalBill = w.purchases.reduce((s,p)=> s + pickBill(p), 0);
+    const totalDue  = w.purchases.reduce((s,p)=> s + pickDue(p),  0);
     const lastDate = w.purchases.length ? iso(w.purchases[w.purchases.length-1].date) : '-';
     const tr = document.createElement('tr');
     tr.classList.add('cursor-pointer');
     tr.innerHTML = `
       <td>${w.name}</td>
-      <td class="text-end">${formatMoney(totalSpent)}</td>
+      <td class="text-end">${formatMoney(totalBill)}</td>
       <td class="text-end">${formatMoney(totalDue)}</td>
       <td>${lastDate}</td>
       <td class="text-center">
@@ -82,10 +102,15 @@ function showHistory(index){
   const tbody = $('#historyTable tbody');
   tbody.innerHTML = '';
   w.purchases.forEach((p, pi)=>{
+    const bill = pickBill(p);
+    const paid = pickPaid(p);
+    const due  = Math.max(0, bill - paid);
+
     const tr = document.createElement('tr');
     tr.innerHTML = `
-      <td class="text-end">${Number(p.amount||0).toFixed(2)}</td>
-      <td class="text-end">${Number(p.due||0).toFixed(2)}</td>
+      <td class="text-end">${bill.toFixed(2)}</td>
+      <td class="text-end">${paid.toFixed(2)}</td>
+      <td class="text-end">${due.toFixed(2)}</td>
       <td>${iso(p.date)}</td>
       <td>${p.product ? p.product : ''}</td>
       <td class="text-center">
@@ -114,11 +139,16 @@ function showHistory(index){
 function startInlineEdit(wi, pi){
   const w = state.warehouses[wi];
   const p = w.purchases[pi];
+  const bill = pickBill(p);
+  const paid = pickPaid(p);
+  const due  = Math.max(0, bill - paid);
+
   const tbody = $('#historyTable tbody');
   const row = tbody.children[pi];
   row.innerHTML = `
-    <td><input class="form-control form-control-sm text-end" type="number" min="0" step="0.01" value="${p.amount}"></td>
-    <td><input class="form-control form-control-sm text-end" type="number" min="0" step="0.01" value="${p.due}"></td>
+    <td><input class="form-control form-control-sm text-end" type="number" min="0" step="0.01" value="${bill}"></td>
+    <td><input class="form-control form-control-sm text-end" type="number" min="0" step="0.01" value="${paid}"></td>
+    <td class="text-end"><span class="fw-semibold" id="editDue">${due.toFixed(2)}</span></td>
     <td><input class="form-control form-control-sm" type="date" value="${iso(p.date)}"></td>
     <td><input class="form-control form-control-sm" value="${p.product||''}" placeholder="(optional)"></td>
     <td class="text-center">
@@ -127,12 +157,27 @@ function startInlineEdit(wi, pi){
         <button class="btn btn-secondary">Cancel</button>
       </div>
     </td>`;
-  const [amountEl, dueEl, dateEl, productEl] = row.querySelectorAll('input');
+
+  const [billEl, paidEl, /* due display */, dateEl, productEl] = row.querySelectorAll('input');
+  const dueSpan = row.querySelector('#editDue');
+
+  function recalc(){ dueSpan.textContent = Math.max(0, toNum(billEl.value) - toNum(paidEl.value)).toFixed(2); }
+  billEl.addEventListener('input', recalc);
+  paidEl.addEventListener('input', recalc);
+
   row.querySelector('.btn-success').addEventListener('click', ()=>{
-    p.amount = Number(amountEl.value||0);
-    p.due = Number(dueEl.value||0);
+    const newBill = toNum(billEl.value);
+    const newPaid = toNum(paidEl.value);
+    const newDue  = Math.max(0, newBill - newPaid);
+
+    // Normalize to new model
+    delete p.amount; // legacy
+    p.bill = newBill;
+    p.paid = newPaid;
+    p.due  = newDue;
     p.date = iso(dateEl.value);
-    p.product = productEl.value.trim() || undefined;
+    p.product = (productEl.value.trim() || undefined);
+
     save();
     refreshAll();
     showHistory(wi);
@@ -149,25 +194,27 @@ function refreshAll(){
 $('#addExpense').addEventListener('click', ()=>{
   const idx = Number($('#warehouseSelect').value);
   const product = $('#productName').value.trim();
-  const amount = Number($('#amountSpent').value || 0);
-  const due = Number($('#dueAmount').value || 0);
+  const bill = toNum($('#totalBill').value);
+  const paid = toNum($('#paidAmount').value);
+  const due  = Math.max(0, bill - paid);
   const date = iso($('#purchaseDate').value || new Date());
   if(isNaN(idx) || idx<0){
     alert('Please select a warehouse.');
     return;
   }
-  if(!amount && !due){
-    alert('Enter at least Amount Spent or Due Amount.');
+  if(!bill && !paid){
+    alert('Enter at least Bill or Paid.');
     return;
   }
-  const rec = { amount, due, date };
+  const rec = { bill, paid, due, date };
   if(product) rec.product = product;
+  // Normalize any legacy structures not needed here
   state.warehouses[idx].purchases.push(rec);
   save();
   refreshAll();
   showHistory(idx);
-  $('#amountSpent').value='';
-  $('#dueAmount').value='';
+  $('#totalBill').value='';
+  $('#paidAmount').value='';
   $('#productName').value='';
 });
 
@@ -192,14 +239,18 @@ $('#confirmAddWarehouse').addEventListener('click', ()=>{
 function asExcelText(v) { return v ? `="${v}"` : ''; }
 
 $('#exportCsv').addEventListener('click', ()=>{
-  const rows = [['Warehouse','Product Name','Amount Spent','Due Amount','Purchase Date']];
+  const rows = [['Warehouse','Product Name','Bill','Paid','Due','Purchase Date']];
   state.warehouses.forEach(w=>{
     w.purchases.forEach(p=>{
+      const bill = pickBill(p);
+      const paid = pickPaid(p);
+      const due  = Math.max(0, bill - paid);
       rows.push([
         w.name,
         p.product || '',
-        Number(p.amount||0),
-        Number(p.due||0),
+        bill,
+        paid,
+        due,
         asExcelText(iso(p.date))
       ]);
     });
@@ -229,8 +280,12 @@ $('#importCsv').addEventListener('click', ()=>{
     const idx = {
       warehouse: header.indexOf('warehouse'),
       product: header.indexOf('product name'),
+      bill: header.indexOf('bill'),
+      paid: header.indexOf('paid'),
+      due: header.indexOf('due'),
+      // legacy compatibility:
       amount: header.indexOf('amount spent'),
-      due: header.indexOf('due amount'),
+      legacyDue: header.indexOf('due amount'),
       date: header.indexOf('purchase date')
     };
     const byName = Object.fromEntries(state.warehouses.map((w,i)=>[w.name,i]));
@@ -238,8 +293,22 @@ $('#importCsv').addEventListener('click', ()=>{
       const cols = line.match(/((?<=\")[^\"]*(?=\")|[^,]+)/g) || [];
       const wname = (cols[idx.warehouse]||'').replaceAll('"','');
       const product = idx.product>-1 ? (cols[idx.product]||'').replaceAll('"','') : '';
-      const amount = Number((cols[idx.amount]||'0').replaceAll('"',''));
-      const due = Number((cols[idx.due]||'0').replaceAll('"',''));
+      let bill = 0, paid = 0, due = 0;
+
+      if (idx.bill > -1 || idx.paid > -1 || idx.due > -1){
+        bill = toNum((cols[idx.bill]||'0').replaceAll('"',''));
+        paid = toNum((cols[idx.paid]||'0').replaceAll('"',''));
+        due  = toNum((cols[idx.due ]||'0').replaceAll('"',''));
+        // trust computed due if missing
+        if (isNaN(due) || (cols[idx.due]==null)) due = Math.max(0, bill - paid);
+      } else {
+        // legacy headers: Amount Spent / Due Amount
+        bill = toNum((cols[idx.amount]    ||'0').replaceAll('"',''));
+        const legacyDue = toNum((cols[idx.legacyDue] ||'0').replaceAll('"',''));
+        paid = Math.max(0, bill - legacyDue);
+        due  = legacyDue;
+      }
+
       const date = (cols[idx.date]||'').replaceAll('"','');
       let wi = byName[wname];
       if(wi===undefined){
@@ -247,7 +316,8 @@ $('#importCsv').addEventListener('click', ()=>{
         wi = state.warehouses.length-1;
         byName[wname] = wi;
       }
-      const rec = {amount, due, date: iso(date)};
+
+      const rec = { bill, paid, due, date: iso(date) };
       if(product) rec.product = product;
       state.warehouses[wi].purchases.push(rec);
     });
@@ -262,5 +332,4 @@ $('#importCsv').addEventListener('click', ()=>{
   $('#purchaseDate').value = iso(new Date());
   renderClientPhoto();
   refreshAll();
-  // Note: we do NOT preselect a warehouse, so the placeholder stays visible
 })();
