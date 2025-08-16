@@ -191,32 +191,48 @@ function refreshAll(){
 }
 
 /****************** ADD EXPENSE ******************/
-$('#addExpense').addEventListener('click', ()=>{
-  const idx = Number($('#warehouseSelect').value);
-  const product = $('#productName').value.trim();
-  const bill = toNum($('#totalBill').value);
-  const paid = toNum($('#paidAmount').value);
+$('#addExpense').addEventListener('click', () => {
+  const sel = $('#warehouseSelect');
+  const billEl = $('#totalBill');
+  const paidEl = $('#paidAmount');
+  const dateEl = $('#purchaseDate');
+
+  // If any element is missing, you’re probably seeing a cached/old HTML or JS
+  if (!sel || !billEl || !paidEl || !dateEl) {
+    alert('Form is not fully loaded. Do a hard refresh (Ctrl+F5) and try again.');
+    return;
+  }
+
+  const idx = Number(sel.value);
+  const product = $('#productName')?.value.trim() || '';
+  const bill = toNum(billEl.value);
+  const paid = toNum(paidEl.value);
   const due  = Math.max(0, bill - paid);
-  const date = iso($('#purchaseDate').value || new Date());
-  if(isNaN(idx) || idx<0){
+  const date = iso(dateEl.value || new Date());
+
+  if (Number.isNaN(idx) || idx < 0) {
     alert('Please select a warehouse.');
     return;
   }
-  if(!bill && !paid){
+  if (!bill && !paid) {
     alert('Enter at least Bill or Paid.');
     return;
   }
+
   const rec = { bill, paid, due, date };
-  if(product) rec.product = product;
-  // Normalize any legacy structures not needed here
+  if (product) rec.product = product;
+
   state.warehouses[idx].purchases.push(rec);
   save();
   refreshAll();
   showHistory(idx);
-  $('#totalBill').value='';
-  $('#paidAmount').value='';
-  $('#productName').value='';
+
+  // Clear form
+  billEl.value = '';
+  paidEl.value = '';
+  if ($('#productName')) $('#productName').value = '';
 });
+
 
 /****************** ADD NEW WAREHOUSE ******************/
 const addWarehouseModal = new bootstrap.Modal(document.getElementById('addWarehouseModal'));

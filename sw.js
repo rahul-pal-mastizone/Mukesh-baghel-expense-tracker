@@ -1,4 +1,4 @@
-const CACHE_NAME = 'mb-expense-cache-v1';
+const CACHE_NAME = 'mb-expense-cache-v3';
 const ASSETS = [
   '/', '/index.html', '/styles.css', '/app.js',
   '/assets/owner.png',
